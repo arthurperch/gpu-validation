@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Generated output (contains GPU serials, hostnames, nvidia-smi/dmesg dumps)
+reports/
+artifacts/
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/

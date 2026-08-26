@@ -1,0 +1,75 @@
+---
+# GPU node onboarding pipeline.
+#
+# Orchestrates the full validation flow as one repeatable operation:
+#   1. validate  — static NVML health check
+#   2. burn      — bandwidth/compute stress under load
+#   3. network   — DHCP / IPv6 / ICMP readiness
+#   4. submit    — POST the combined report to the control-plane gate
+#   5. gate      — the control plane decides PROVISION / HOLD / RMA
+#
+# Run:
+#   ansible-playbook -i ansible/inventory.ini ansible/playbooks/onboard.yml
+
+- name: GPU node onboarding pipeline
+  hosts: gpu_nodes
+  gather_facts: true
+  vars:
+    report_dir: "{{ gpu_validation_dir }}/reports"
+    venv_python: "{{ gpu_validation_dir }}/.venv/bin/python"
+
+  tasks:
+    - name: Ensure report directory exists
+      ansible.builtin.file:
+        path: "{{ report_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Compile the CUDA burn binary if missing
+      ansible.builtin.command:
+        cmd: "nvcc -arch=sm_86 -O3 -o {{ gpu_validation_dir }}/artifacts/burn {{ gpu_validation_dir }}/validator/burn.cu"
+        creates: "{{ gpu_validation_dir }}/artifacts/burn"
+
+    - name: 1/4 — Static GPU health validation
+      ansible.builtin.command:
+        cmd: "{{ venv_python }} {{ gpu_validation_dir }}/validator/gpu_validate.py --json {{ report_dir }}/health.json"
+      register: health
+      changed_when: false
+      ignore_errors: true
+
+    - name: 2/4 — Burn test under load
+      ansible.builtin.command:
+        cmd: "{{ venv_python }} {{ gpu_validation_dir }}/validator/burn_test.py --seconds 10 --json {{ report_dir }}/burn.json"
+      register: burn
+      changed_when: false
+      ignore_errors: true
+
+    - name: 3/4 — Network validation
+      ansible.builtin.command:
+        cmd: "{{ venv_python }} {{ gpu_validation_dir }}/validator/network_validate.py --json {{ report_dir }}/network.json"
+      register: network
+      changed_when: false
+      ignore_errors: true
+
+    - name: 4/5 — Combine reports (reconcile static vs dynamic checks)
+      ansible.builtin.command:
+        cmd: "{{ venv_python }} {{ gpu_validation_dir }}/validator/combine_report.py --out {{ report_dir }}/combined.json"
+      register: combine
+      changed_when: false
+      ignore_errors: true
+
+    - name: 5/5 — Submit combined report to the control-plane gate
+      ansible.builtin.command:
+        cmd: "{{ venv_python }} {{ gpu_validation_dir }}/validator/submit_report.py --report {{ report_dir }}/combined.json --endpoint {{ gate_endpoint }}"
+      register: gate
+      changed_when: false
+      ignore_errors: true
+
+    - name: Print pipeline summary
+      ansible.builtin.debug:
+        msg:
+          - "health   exit: {{ health.rc }}"
+          - "burn     exit: {{ burn.rc }}"
+          - "network  exit: {{ network.rc }}"
+          - "combine  exit: {{ combine.rc }}"
+          - "gate decision (see stdout above)"
