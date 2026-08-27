@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bandwidth/compute burn test — validates the GPU *under load*.
+"""Bandwidth/compute burn test, validates the GPU *under load*.
 
 Runs the CUDA burn binary in the background and samples NVML telemetry the
 whole time. A static health check (gpu_validate.py) can't prove the PCIe
@@ -25,13 +25,10 @@ from pathlib import Path
 
 import pynvml
 
-# resolve default binary relative to the repo root, so the script works no
-# matter what CWD it is launched from (e.g. by Ansible, which runs from ~)
+# Resolve the default binary relative to the repo root, so the script works
+# no matter what CWD it is launched from (e.g. by Ansible, which runs from ~).
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_BINARY = REPO_ROOT / "artifacts" / "burn"
-
-RESET = "\033[0m"
-GREEN = "\033[32m"; YELLOW = "\033[33m"; RED = "\033[31m"; CYAN = "\033[36m"; DIM = "\033[2m"
 
 
 def sample(handle):
@@ -53,7 +50,7 @@ def main() -> int:
     ap.add_argument("--seconds", type=int, default=10)
     ap.add_argument("--buffer-gib", type=int, default=2)
     ap.add_argument("--binary", default=str(DEFAULT_BINARY))
-    ap.add_argument("--json", type=__import__("pathlib").Path, help="write timeline to file")
+    ap.add_argument("--json", type=Path, help="write timeline to file")
     args = ap.parse_args()
 
     pynvml.nvmlInit()
@@ -61,8 +58,8 @@ def main() -> int:
     max_gen = pynvml.nvmlDeviceGetMaxPcieLinkGeneration(handle)
     temp_limit = 85.0
 
-    print(f"{CYAN}=== GPU Burn Test — {args.seconds}s @ {args.buffer_gib} GiB ==={RESET}\n")
-    print(f"{DIM}launching {args.binary}...{RESET}\n")
+    print(f"\n=== GPU Burn Test - {args.seconds}s @ {args.buffer_gib} GiB ===\n")
+    print(f"launching {args.binary}...\n")
 
     proc = subprocess.Popen(
         [args.binary, str(args.seconds), str(args.buffer_gib)],
@@ -76,10 +73,10 @@ def main() -> int:
 
     out, _ = proc.communicate()
     if out.strip():
-        print(f"{DIM}{out.strip()}{RESET}\n")
+        print(f"{out.strip()}\n")
 
     if not timeline:
-        print(f"{RED}ERROR: no telemetry collected — did the burn binary run?{RESET}")
+        print("ERROR: no telemetry collected - did the burn binary run?")
         return 2
 
     # --- analyze the run -------------------------------------------------
@@ -94,7 +91,7 @@ def main() -> int:
     drew_power = max_power >= 100.0
     thermal_ok = t <= temp_limit
 
-    print(f"{CYAN}=== Burn results ==={RESET}")
+    print("=== Burn results ===")
     rows = [
         ("peak temp", f"{t}C", "PASS" if thermal_ok else "FAIL", f"limit {temp_limit}C"),
         ("max SM clock", f"{max_sm} MHz", "PASS" if held_boost else "WARN", "boost ~1500+"),
@@ -104,12 +101,15 @@ def main() -> int:
          "PASS" if link_ramped else "FAIL", "ramped to max gen under load"),
     ]
     for name, val, st, note in rows:
-        color = {"PASS": GREEN, "WARN": YELLOW, "FAIL": RED}[st]
-        print(f"  {color}{st:4}{RESET} {name:12} {val}  {DIM}{note}{RESET}")
+        print(f"  {st:4} {name:12} {val}  {note}")
 
-    verdict = "FAIL" if (not link_ramped or not thermal_ok) else \
-              ("WARN" if (not held_boost or not drew_power) else "PASS")
-    print(f"\n  {CYAN if verdict == 'PASS' else YELLOW}VERDICT: {verdict}{RESET}\n")
+    if not link_ramped or not thermal_ok:
+        verdict = "FAIL"
+    elif not held_boost or not drew_power:
+        verdict = "WARN"
+    else:
+        verdict = "PASS"
+    print(f"\n  VERDICT: {verdict}\n")
 
     if args.json:
         args.json.write_text(json.dumps({

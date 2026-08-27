@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GPU validation runner — produces PASS/FAIL + JSON report + RMA evidence bundle."""
+"""GPU validation runner, produces PASS/FAIL + JSON report + RMA evidence bundle."""
 from __future__ import annotations
 
 import argparse
@@ -11,30 +11,28 @@ from pathlib import Path
 
 import pynvml
 
+# The rules. Each check compares a live GPU reading against one of these.
 THRESHOLDS = {
-    "temp_c_max": 85.0,
-    "power_pct_max": 95.0,
-    "min_pcie_gen": 3,
-    "min_pcie_width": 8,
-    "ecc_uncorrectable_max": 0,
+    "temp_c_max": 85.0,           # max GPU temperature in Celsius
+    "power_pct_max": 95.0,        # max power draw as % of the card's limit
+    "min_pcie_gen": 3,            # PCIe generation must be at least 3
+    "min_pcie_width": 8,          # PCIe lanes must be at least x8
+    "ecc_uncorrectable_max": 0,   # uncorrectable ECC errors allowed: none
 }
-
-RESET = "\033[0m"
 
 
 def _s(x):
-    """NVML returns bytes on old pynvml, str on nvidia-ml-py — normalize."""
+    """NVML returns bytes on old pynvml, str on nvidia-ml-py, normalize."""
     return x.decode() if isinstance(x, (bytes, bytearray)) else str(x)
-GREEN = "\033[32m"
-YELLOW = "\033[33m"
-RED = "\033[31m"
-CYAN = "\033[36m"
-DIM = "\033[2m"
 
 
 class Check:
+    """A single named result: what we measured, its status, and a note."""
     def __init__(self, name: str, value, status: str, detail: str = ""):
-        self.name, self.value, self.status, self.detail = name, value, status, detail
+        self.name = name
+        self.value = value
+        self.status = status
+        self.detail = detail
 
     def as_dict(self) -> dict:
         return {"name": self.name, "value": self.value,
@@ -42,6 +40,7 @@ class Check:
 
 
 def _throttle_reasons(flags: int) -> list[str]:
+    """Turn NVML's throttle bitmask into human-readable reasons."""
     mapping = {
         1: "app clocks", 2: "SW power cap", 4: "HW power slowdown",
         8: "sync boost", 16: "SW thermal slowdown", 32: "HW thermal slowdown",
@@ -54,6 +53,7 @@ def _throttle_reasons(flags: int) -> list[str]:
 
 
 def collect(handle) -> list[Check]:
+    """Read every signal from the GPU and turn each into a Check."""
     checks: list[Check] = []
     name = _s(pynvml.nvmlDeviceGetName(handle))
 
@@ -103,16 +103,15 @@ def collect(handle) -> list[Check]:
     width = pynvml.nvmlDeviceGetCurrPcieLinkWidth(handle)
     max_gen = pynvml.nvmlDeviceGetMaxPcieLinkGeneration(handle)
     max_w = pynvml.nvmlDeviceGetMaxPcieLinkWidth(handle)
-    util = pynvml.nvmlDeviceGetUtilizationRates(handle).gpu
     ok_gen = gen >= THRESHOLDS["min_pcie_gen"]
     ok_w = width >= THRESHOLDS["min_pcie_width"]
     detail = f"Gen{gen} x{width} (max Gen{max_gen} x{max_w})"
     if not ok_gen or not ok_w:
         # A static read can't prove a bad link: PCIe downshifts on bandwidth
-        # demand, not utilization. Flag as WARN and defer hard FAIL to the
-        # bandwidth burn test (step 2) which forces the link up.
+        # demand, not utilization. Flag WARN and defer hard FAIL to the
+        # bandwidth burn test which forces the link up.
         st = "WARN"
-        detail += " — downshifted; verify under bandwidth load (burn test)"
+        detail += " - downshifted; verify under bandwidth load (burn test)"
     else:
         st = "PASS"
     checks.append(Check("pcie_link", f"Gen{gen} x{width}", st, detail))
@@ -137,7 +136,7 @@ def collect(handle) -> list[Check]:
                             st, "volatile ECC counters"))
     except pynvml.NVMLError:
         checks.append(Check("ecc", "N/A", "N/A",
-                            "consumer silicon — no ECC (datacenter cards: A100/H100/MI300)"))
+                            "consumer silicon - no ECC (datacenter cards: A100/H100/MI300)"))
 
     # --- identity ---------------------------------------------------------
     try:
@@ -154,6 +153,7 @@ def collect(handle) -> list[Check]:
 
 
 def verdict(checks: list[Check]) -> str:
+    """Return the worst status across all checks: FAIL > WARN > PASS."""
     statuses = [c.status for c in checks]
     if any(s == "FAIL" for s in statuses):
         return "FAIL"
@@ -163,6 +163,7 @@ def verdict(checks: list[Check]) -> str:
 
 
 def collect_rma_evidence(out_dir: Path, checks: list[Check]) -> Path:
+    """On failure, write an evidence bundle: nvidia-smi dump, kernel log, report."""
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "nvidia-smi.txt").write_text(
         subprocess.run(["nvidia-smi", "-q"], capture_output=True, text=True).stdout)
@@ -171,10 +172,6 @@ def collect_rma_evidence(out_dir: Path, checks: list[Check]) -> Path:
     (out_dir / "report.json").write_text(json.dumps(
         [c.as_dict() for c in checks], indent=2))
     return out_dir / "report.json"
-
-
-def color(status: str) -> str:
-    return {"PASS": GREEN, "WARN": YELLOW, "FAIL": RED, "N/A": DIM}.get(status, RESET)
 
 
 def main() -> int:
@@ -199,17 +196,16 @@ def main() -> int:
     v = verdict(checks)
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
-    print(f"\n{CYAN}=== GPU Production Validation — {ts} ==={RESET}\n")
+    print(f"\n=== GPU Production Validation - {ts} ===\n")
     for c in checks:
-        print(f"  {color(c.status)}{c.status:4}{RESET} {c.name:20} "
-              f"{DIM}{c.value}{RESET}")
+        print(f"  {c.status:4} {c.name:20} {c.value}")
         if c.detail:
-            print(f"       {DIM}↳ {c.detail}{RESET}")
-    print(f"\n  {color(v)}VERDICT: {v}{RESET}\n")
+            print(f"       -> {c.detail}")
+    print(f"\n  VERDICT: {v}\n")
 
     if v == "FAIL":
         rpt = collect_rma_evidence(args.rma_dir, checks)
-        print(f"{RED}RMA evidence bundle written to {rpt.parent}{RESET}\n")
+        print(f"RMA evidence bundle written to {rpt.parent}\n")
 
     if args.json:
         # extract identity fields for the control-plane report (gate needs them)

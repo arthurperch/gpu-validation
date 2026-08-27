@@ -1,4 +1,4 @@
-"""GPU Production Validation Suite — syndrax infrastructure gate.
+"""GPU Production Validation Suite, syndrax infrastructure gate.
 
 Validates a GPU node's readiness for production onboarding. Mirrors datacenter
 GPU validation methodology (NVML telemetry, PCIe link integrity, thermal/power

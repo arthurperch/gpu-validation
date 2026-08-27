@@ -1,80 +1,102 @@
 # GPU Validation Fleet
 
-Production-style GPU hardware validation: burn-in, health, and network checks
-that report into a **serverless gate** (Lambda + API Gateway + DynamoDB) which
-decides whether each node gets **provisioned, held, or RMA'd**.
+Tools for checking whether a GPU node is healthy enough to put into production.
+A node runs a health check, a burn in test, and a network check, then posts the
+results to a serverless gate that decides whether to onboard it, hold it, or
+send it back (RMA).
 
-**Design principle:** the node *reports* raw checks; the control plane *decides*
-the gate. A node cannot gate itself — mirroring real fleet onboarding and RMA.
+The node reports. The gate decides. A node never gates itself.
 
----
+## What's in here
 
-## Components
+The repo has two halves.
 
-### Validator (`validator/`)
-| Module | Purpose |
+**The validators** live in `validator/`. These run on the GPU machine itself and
+each one writes a JSON report.
+
+| File | What it does |
 |---|---|
-| `gpu_validate.py` | NVML health check — driver, temp, throttle, power, VRAM, PCIe, clocks, ECC, serial |
-| `burn_test.py` + `burn.cu` | CUDA burn-in — forces the PCIe link up + thermals |
-| `network_validate.py` | DHCP / IPv6 / ICMP readiness |
-| `combine_report.py` | Merge + reconcile static-vs-dynamic checks |
-| `submit_report.py` | POST the JSON report to the gate |
+| `gpu_validate.py` | Reads NVML sensors directly. Driver, temperature, throttle, power, VRAM, PCIe link, clocks, ECC, serial. |
+| `burn.cu` + `burn_test.py` | Stresses the card under load so a weak GPU can't hide behind an idle read. |
+| `network_validate.py` | Checks DHCP, IPv6, and ICMP. A node that can't reach the network is useless no matter how good the GPU is. |
+| `combine_report.py` | Merges the three reports into one and reconciles conflicting results. |
+| `submit_report.py` | Posts the combined report to the gate. |
 
-### Orchestration (`ansible/`)
-`onboard.yml` — 5-stage pipeline. Runs **identically** against a local node or a
-rented cloud GPU by swapping the host/connection.
+**The orchestration** lives in `ansible/`. `onboard.yml` runs the whole thing as
+one pipeline: validate, burn, network check, combine, submit.
 
-### The gate (`lab/cloud/labs/04-gpu-gate/`)
-Lambda + API Gateway + DynamoDB, built on Terraform + LocalStack.
+The gate itself is a separate repo (Lambda + API Gateway + DynamoDB on
+Terraform + LocalStack). It receives a report and returns one of three
+decisions:
 
 | Report status | Decision |
 |---|---|
-| any `FAIL` | `RMA` — pull the node |
-| any `WARN` | `HOLD` — manual review / burn test |
-| else | `PROVISION` — onboard to production |
+| any `FAIL` | `RMA` (pull the node) |
+| any `WARN` | `HOLD` (manual review, or rerun the burn test) |
+| otherwise | `PROVISION` (onboard it) |
 
----
+## Why this shape
 
-## Architecture
+Three ideas drove the design, and they're the interesting part.
 
-```
-[GPU node]  gpu_validate.py ──JSON──▶ API Gateway POST /validate
-                                          │
-                                          ▼
-                                   Lambda "gpu-gate"
-                                     • parse report
-                                     • DECIDE the gate
-                                     • append audit record
-                                          │
-                                          ▼
-                                   DynamoDB "gpu-nodes"
-                                   (node_id, report_ts) history
-```
+The first is that **PCIe downshifts on bandwidth demand, not utilization.** A
+desktop compositor can pin the GPU at 30% utilization while the PCIe link sits
+parked at Gen1 to save power. A static read can't tell a downshifted link from
+a broken one. So the health check only *warns* on a low link speed, and the
+burn test is what actually forces the link up and proves it can hold Gen3.
+That ordering, static check is conservative and dynamic test is authoritative,
+is the whole trick.
 
----
+The second is that **ECC only exists on datacenter cards.** A consumer RTX 3070
+has no error correcting memory, so the validator reports `N/A` on it, and would
+report real uncorrectable and correctable counts on an A100 or H100 or MI300.
+Handling both without crashing matters if the same pipeline ever runs against
+rented cloud GPUs.
 
-## Key insights discovered
-
-- **PCIe downshifts on bandwidth demand, not utilization.** A desktop compositor
-  hits 30% GPU util but parks the PCIe link at Gen1 (ASPM). A static read can't
-  prove a bad link — you need a bandwidth load to force it up. *(Observed live:
-  Gen1 idle → Gen3 under burn load.)*
-- **ECC is datacenter-only.** Consumer silicon (RTX 3070) reports `N/A`; datacenter
-  parts (A100/H100/MI300) expose real ECC counters.
-
----
+The third is that **the gate lives off the node.** A machine shouldn't be able
+to declare itself healthy. The node sends raw readings, and a central service
+decides what to do with them. That's how real fleet onboarding and RMA work.
 
 ## Quick start
 
+You need a machine with an NVIDIA GPU, the driver installed, and Python 3.11+.
+
 ```bash
-python -m venv .venv && source .venv/bin/activate
+python -m venv .venv
+source .venv/bin/activate
 pip install nvidia-ml-py ansible
-python -m validator.gpu_validate
+
+# compile the burn binary
+nvcc -arch=sm_86 -O3 -o artifacts/burn validator/burn.cu
+
+# run the health check
+python validator/gpu_validate.py --json reports/health.json
+
+# run the whole pipeline (needs the gate running, or LocalStack)
+ansible-playbook -i ansible/inventory.ini ansible/playbooks/onboard.yml
 ```
 
----
+`nvidia-ml-py` is the NVIDIA NVML Python binding. `ansible` is only needed for
+the orchestration playbook. `nvcc` comes with the CUDA toolkit and is only
+needed to build the burn binary.
+
+## Layout
+
+```
+validator/
+  gpu_validate.py      static health check
+  burn.cu              CUDA burn kernel
+  burn_test.py         runs the burn, samples telemetry
+  network_validate.py  DHCP / IPv6 / ICMP
+  combine_report.py    merge + reconcile
+  submit_report.py     POST to the gate
+ansible/
+  inventory.ini        fleet inventory
+  playbooks/onboard.yml  the pipeline
+```
 
 ## Status
 
-Active. The gate integration (`04-gpu-gate`) is the current work — wiring a real
-validator report through the API to a PROVISION/HOLD/RMA decision.
+Working. The gate integration is the newest piece. The pipeline runs end to end
+against a local RTX 3070 and returns a PROVISION / HOLD / RMA decision through
+the API.

@@ -2,7 +2,7 @@
 //
 // Forces the GPU out of idle: clocks ramp to boost, power draw climbs, the
 // PCIe link steps up to its max generation, and temperature rises. This is
-// what a validation engineer runs before trusting a card in production —
+// what a validation engineer runs before trusting a card in production , 
 // a card that can't hold max clocks / thermals under load is a bad card,
 // and a static idle read would never catch it.
 //
@@ -54,9 +54,9 @@ int main(int argc, char **argv) {
     CHECK(cudaMemcpy(d_a, h_a, n * sizeof(float), cudaMemcpyHostToDevice));
 
     // Two alternating phases, so the GPU is never idle waiting on PCIe:
-    //   * compute phase   — many back-to-back kernel launches: saturates SMs,
+    //   * compute phase  , many back-to-back kernel launches: saturates SMs,
     //                       pushes clocks to boost and power draw toward TDP
-    //   * bandwidth phase — host<->device copies: saturates the PCIe link and
+    //   * bandwidth phase, host<->device copies: saturates the PCIe link and
     //                       forces it up to its max generation
     // A naive loop that copies between every launch idles the GPU ~80% of
     // the time and never stresses the thermal envelope (weak burn).

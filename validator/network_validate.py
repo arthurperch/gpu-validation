@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Network validation — DHCP, IPv6, ICMP readiness for a GPU node.
+"""Network validation, DHCP, IPv6, ICMP readiness for a GPU node.
 
 A production node is useless if it can't talk to the network. Before a GPU
-node onboards, we verify the three data-center basics the role calls out:
+node onboards, we verify the three data-center basics:
 
-  * DHCP  — did the node get a lease, and is it valid / non-link-local?
-  * IPv6  — is link-local up, and is there a routable (SLAAC/global) address?
-  * ICMP  — can we reach the default gateway (and an external host) over ping?
+  * DHCP , did the node get a lease, and is it valid / non-link-local?
+  * IPv6 , is link-local up, and is there a routable (SLAAC/global) address?
+  * ICMP , can we reach the default gateway (and an external host) over ping?
 
 Runs entirely from the standard library (no root, no external deps).
 
@@ -25,9 +25,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-RESET = "\033[0m"
-GREEN = "\033[32m"; YELLOW = "\033[33m"; RED = "\033[31m"; CYAN = "\033[36m"; DIM = "\033[2m"
-
 
 def is_link_local_v4(ip: str) -> bool:
     return ip.startswith("169.254.")
@@ -40,9 +37,9 @@ def is_link_local_v6(ip: str) -> bool:
 def get_interface_addresses():
     """Return (ipv4_list, ipv6_list) for the primary interface.
 
-    We ask the kernel for the interface that owns the default route by
-    connecting a UDP socket (no packets actually sent) — this is the
-    standard trick to discover the outbound interface + its address.
+    We discover the outbound interface by connecting a UDP socket (no packets
+    are actually sent), the standard trick to find the address that owns the
+    default route.
     """
     ipv4, ipv6 = [], []
     try:
@@ -62,11 +59,10 @@ def get_interface_addresses():
             if len(parts) < 6:
                 continue
             addr = parts[0]
-            # /proc gives 32 hex chars (16 bytes), no colons
+            # /proc gives 32 hex chars (16 bytes), no colons, insert them
             groups = [addr[i:i + 4] for i in range(0, 32, 4)]
             ip6 = ":".join(groups)
-            # skip loopback
-            if ip6 == "::1":
+            if ip6 == "::1":  # skip loopback
                 continue
             ipv6.append(ip6)
     except OSError:
@@ -78,14 +74,14 @@ def dhcp_check():
     """DHCP: is there a valid (non-link-local) IPv4 lease?
 
     A 169.254.x.x address means DHCP failed and the host fell back to
-    link-local — a red flag for a node meant to join the fleet.
+    link-local, a red flag for a node meant to join the fleet.
     """
     ipv4, _ = get_interface_addresses()
     if not ipv4:
         return ("FAIL", "no IPv4 address", "no lease at all")
     ip = ipv4[0]
     if is_link_local_v4(ip):
-        return ("FAIL", ip, "link-local only — DHCP lease missing")
+        return ("FAIL", ip, "link-local only - DHCP lease missing")
     return ("PASS", ip, "valid lease")
 
 
@@ -97,7 +93,7 @@ def ipv6_check():
     if not link_local:
         return ("FAIL", "none", "no IPv6 link-local")
     if global_addrs:
-        return ("PASS", global_addrs[0], f"global + link-local present")
+        return ("PASS", global_addrs[0], "global + link-local present")
     return ("WARN", link_local[0], "link-local only, no global/SLAAC address")
 
 
@@ -117,9 +113,7 @@ def icmp_check(target: str = "8.8.8.8"):
             r = subprocess.run(["ping", "-c", "1", "-W", "2", host],
                                capture_output=True, text=True, timeout=5)
             ok = r.returncode == 0
-            # extract time= for the report
-            detail = "reachable"
-            results[label] = ("PASS" if ok else "FAIL", host, detail)
+            results[label] = ("PASS" if ok else "FAIL", host, "reachable" if ok else "no reply")
         except (subprocess.TimeoutExpired, OSError) as e:
             results[label] = ("FAIL", host, f"ping error: {e}")
     return results
@@ -145,7 +139,7 @@ def main() -> int:
     ap.add_argument("--json", type=Path, help="write report to file")
     args = ap.parse_args()
 
-    print(f"{CYAN}=== Network Validation ==={RESET}\n")
+    print("\n=== Network Validation ===\n")
 
     checks = []
 
@@ -160,14 +154,13 @@ def main() -> int:
                        "status": st, "detail": note})
 
     for c in checks:
-        color = {"PASS": GREEN, "WARN": YELLOW, "FAIL": RED, "N/A": DIM}[c["status"]]
-        print(f"  {color}{c['status']:4}{RESET} {c['name']:12} {DIM}{c['value']}{RESET}")
+        print(f"  {c['status']:4} {c['name']:12} {c['value']}")
         if c["detail"]:
-            print(f"       {DIM}↳ {c['detail']}{RESET}")
+            print(f"       -> {c['detail']}")
 
     statuses = [c["status"] for c in checks]
     verdict = "FAIL" if "FAIL" in statuses else ("WARN" if "WARN" in statuses else "PASS")
-    print(f"\n  {CYAN if verdict == 'PASS' else YELLOW}VERDICT: {verdict}{RESET}\n")
+    print(f"\n  VERDICT: {verdict}\n")
 
     if args.json:
         args.json.write_text(json.dumps({"test": "network", "verdict": verdict,

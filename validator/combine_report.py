@@ -21,9 +21,6 @@ import json
 import sys
 from pathlib import Path
 
-RESET = "\033[0m"
-GREEN = "\033[32m"; YELLOW = "\033[33m"; RED = "\033[31m"; CYAN = "\033[36m"; DIM = "\033[2m"
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_REPORTS = REPO_ROOT / "reports"
 
@@ -31,7 +28,7 @@ DEFAULT_REPORTS = REPO_ROOT / "reports"
 def load(name: str) -> dict:
     p = DEFAULT_REPORTS / name
     if not p.exists():
-        print(f"missing {p} — run the corresponding validator first", file=sys.stderr)
+        print(f"missing {p} - run the corresponding validator first", file=sys.stderr)
         return {}
     return json.loads(p.read_text())
 
@@ -44,33 +41,38 @@ def reconcile(health_checks, burn):
         if c["name"] == "pcie_link" and c["status"] == "WARN" and ramped:
             c = dict(c)
             c["status"] = "PASS"
-            c["detail"] = (f"{c['value']} — downshift was idle-only; "
+            c["detail"] = (f"{c['value']} - downshift was idle-only; "
                            f"ramped to Gen{burn['pcie_max_gen_seen']} under load")
         out.append(c)
     return out
+
+
+def status_for(ok: bool, fail_allowed: bool) -> str:
+    """Map a boolean to a status. fail_allowed=True means WARN instead of FAIL."""
+    if ok:
+        return "PASS"
+    return "WARN" if fail_allowed else "FAIL"
 
 
 def burn_checks(burn) -> list:
     if not burn:
         return []
     ramped = burn.get("pcie_max_gen_seen", 0) >= burn.get("pcie_max_gen", 0)
-    def st(cond, warn=False):
-        return "FAIL" if not cond and not warn else ("WARN" if not cond else "PASS")
     return [
         {"name": "burn_peak_temp_c", "value": burn.get("peak_temp_c"),
-         "status": st(burn.get("peak_temp_c", 999) <= 85),
+         "status": status_for(burn.get("peak_temp_c", 999) <= 85, fail_allowed=False),
          "detail": "limit 85C"},
         {"name": "burn_max_sm_mhz", "value": burn.get("max_sm_mhz"),
-         "status": st(burn.get("max_sm_mhz", 0) >= 1500, warn=True),
+         "status": status_for(burn.get("max_sm_mhz", 0) >= 1500, fail_allowed=True),
          "detail": "held boost under load"},
         {"name": "burn_max_power_w", "value": burn.get("max_power_w"),
-         "status": st(burn.get("max_power_w", 0) >= 100, warn=True),
+         "status": status_for(burn.get("max_power_w", 0) >= 100, fail_allowed=True),
          "detail": "memory-bound kernel; compute-dense would draw more"},
         {"name": "burn_pcie_under_load", "value": f"Gen{burn.get('pcie_max_gen_seen')}",
-         "status": st(ramped),
+         "status": status_for(ramped, fail_allowed=False),
          "detail": "ramped to max gen under bandwidth load"},
         {"name": "burn_max_util", "value": burn.get("max_util"),
-         "status": st(burn.get("max_util", 0) >= 90, warn=True),
+         "status": status_for(burn.get("max_util", 0) >= 90, fail_allowed=True),
          "detail": "percent"},
     ]
 
@@ -88,8 +90,7 @@ def main() -> int:
     all_checks = health_checks + burn_checks(burn) + network.get("checks", [])
 
     statuses = [c["status"] for c in all_checks]
-    verdict = ("FAIL" if "FAIL" in statuses else
-               "WARN" if "WARN" in statuses else "PASS")
+    verdict = "FAIL" if "FAIL" in statuses else ("WARN" if "WARN" in statuses else "PASS")
 
     combined = {
         "node_id": health.get("node_id", ""),
@@ -100,11 +101,10 @@ def main() -> int:
     }
     args.out.write_text(json.dumps(combined, indent=2))
 
-    print(f"{CYAN}=== Combined report ({len(all_checks)} checks) ==={RESET}\n")
+    print(f"\n=== Combined report ({len(all_checks)} checks) ===\n")
     for c in all_checks:
-        color = {"PASS": GREEN, "WARN": YELLOW, "FAIL": RED, "N/A": DIM}[c["status"]]
-        print(f"  {color}{c['status']:4}{RESET} {c['name']:22} {DIM}{c['value']}{RESET}")
-    print(f"\n  {CYAN if verdict == 'PASS' else YELLOW}VERDICT: {verdict}{RESET}")
+        print(f"  {c['status']:4} {c['name']:22} {c['value']}")
+    print(f"\n  VERDICT: {verdict}")
     print(f"  written: {args.out}\n")
 
     return {"PASS": 0, "WARN": 0, "FAIL": 1}.get(verdict, 1)
