@@ -21,9 +21,21 @@ THRESHOLDS = {
 }
 
 
-def _s(x):
-    """NVML returns bytes on old pynvml, str on nvidia-ml-py, normalize."""
-    return x.decode() if isinstance(x, (bytes, bytearray)) else str(x)
+def to_string(x):
+    """Turn an NVML return value into a normal string.
+
+    Different versions of the NVIDIA library return different types. Old
+    pynvml returns raw bytes like b"RTX 3070". New nvidia-ml-py returns a
+    plain string like "RTX 3070". This helper accepts either and always
+    gives back a normal string, so the rest of the code never has to care
+    which library it is talking to.
+
+    If x is bytes, decode it into a string. Otherwise just convert it with
+    str(), which is a no-op on an already-string value.
+    """
+    if isinstance(x, (bytes, bytearray)):
+        return x.decode()
+    return str(x)
 
 
 class Check:
@@ -55,10 +67,10 @@ def _throttle_reasons(flags: int) -> list[str]:
 def collect(handle) -> list[Check]:
     """Read every signal from the GPU and turn each into a Check."""
     checks: list[Check] = []
-    name = _s(pynvml.nvmlDeviceGetName(handle))
+    name = to_string(pynvml.nvmlDeviceGetName(handle))
 
     # --- driver / library -------------------------------------------------
-    drv = _s(pynvml.nvmlSystemGetDriverVersion())
+    drv = to_string(pynvml.nvmlSystemGetDriverVersion())
     try:
         cuda = pynvml.nvmlSystemGetCudaDriverVersion_v2()
         cuda_s = f"{cuda // 1000}.{(cuda % 1000) // 10}"
@@ -140,11 +152,11 @@ def collect(handle) -> list[Check]:
 
     # --- identity ---------------------------------------------------------
     try:
-        sn = _s(pynvml.nvmlDeviceGetSerial(handle))
+        sn = to_string(pynvml.nvmlDeviceGetSerial(handle))
     except Exception:
         sn = "n/a"
     try:
-        uuid = _s(pynvml.nvmlDeviceGetUUID(handle))
+        uuid = to_string(pynvml.nvmlDeviceGetUUID(handle))
     except Exception:
         uuid = "n/a"
     checks.append(Check("serial/uuid", sn, "PASS", f"uuid={uuid}"))

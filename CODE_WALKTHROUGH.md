@@ -46,6 +46,23 @@ Each key is a name, each value is the number a check compares against. If you
 want to change the temperature limit, you change `85.0` here and nothing else.
 That's the point of keeping all the rules in one place.
 
+### to_string()
+
+Just above the thresholds is a small helper called `to_string`. It exists
+because different versions of the NVIDIA library return different types. Old
+`pynvml` returns raw bytes like `b"RTX 3070"`. New `nvidia-ml-py` returns a
+plain string. `to_string` accepts either and always returns a normal string.
+
+```python
+if isinstance(x, (bytes, bytearray)):
+    return x.decode()
+return str(x)
+```
+
+If the value is bytes, decode it. Otherwise convert it to a string (which is a
+no-op on something that's already a string). The point is that the rest of the
+code never has to worry about which library it's talking to.
+
 ### The Check class
 
 A `Check` is just a little container holding four things: a name, a value, a
