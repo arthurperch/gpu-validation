@@ -5,8 +5,11 @@
 #   1. validate , static NVML health check
 #   2. burn     , bandwidth/compute stress under load
 #   3. network  , DHCP / IPv6 / ICMP readiness
-#   4. submit   , POST the combined report to the control-plane gate
-#   5. gate     , the control plane decides PROVISION / HOLD / RMA
+#   4. combine  , merge the three reports into one
+#   5. submit   , POST the combined report to the control-plane gate
+#
+# The gate itself is external. It lives in a separate repo and returns
+# PROVISION / HOLD / RMA after this playbook submits the report.
 #
 # Run:
 #   ansible-playbook -i ansible/inventory.ini ansible/playbooks/onboard.yml
@@ -30,21 +33,21 @@
         cmd: "nvcc -arch=sm_86 -O3 -o {{ gpu_validation_dir }}/artifacts/burn {{ gpu_validation_dir }}/validator/burn.cu"
         creates: "{{ gpu_validation_dir }}/artifacts/burn"
 
-    - name: 1/4, Static GPU health validation
+    - name: 1/5, Static GPU health validation
       ansible.builtin.command:
         cmd: "{{ venv_python }} {{ gpu_validation_dir }}/validator/gpu_validate.py --json {{ report_dir }}/health.json"
       register: health
       changed_when: false
       ignore_errors: true
 
-    - name: 2/4, Burn test under load
+    - name: 2/5, Burn test under load
       ansible.builtin.command:
         cmd: "{{ venv_python }} {{ gpu_validation_dir }}/validator/burn_test.py --seconds 10 --json {{ report_dir }}/burn.json"
       register: burn
       changed_when: false
       ignore_errors: true
 
-    - name: 3/4, Network validation
+    - name: 3/5, Network validation
       ansible.builtin.command:
         cmd: "{{ venv_python }} {{ gpu_validation_dir }}/validator/network_validate.py --json {{ report_dir }}/network.json"
       register: network
