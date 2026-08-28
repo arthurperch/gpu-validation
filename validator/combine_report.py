@@ -57,16 +57,22 @@ def status_for(ok: bool, fail_allowed: bool) -> str:
 def burn_checks(burn) -> list:
     if not burn:
         return []
+    # Baselines tuned for the RTX 3070 used to develop this; per-SKU in a
+    # real fleet. Kept here rather than in burn_test.py so the gate can also
+    # reason about the same numbers without importing the node-side script.
+    temp_limit = 85.0
+    boost_sm_min = 1500
+    power_min = 100.0
     ramped = burn.get("pcie_max_gen_seen", 0) >= burn.get("pcie_max_gen", 0)
     return [
         {"name": "burn_peak_temp_c", "value": burn.get("peak_temp_c"),
-         "status": status_for(burn.get("peak_temp_c", 999) <= 85, fail_allowed=False),
-         "detail": "limit 85C"},
+         "status": status_for(burn.get("peak_temp_c", 999) <= temp_limit, fail_allowed=False),
+         "detail": f"limit {temp_limit:.0f}C"},
         {"name": "burn_max_sm_mhz", "value": burn.get("max_sm_mhz"),
-         "status": status_for(burn.get("max_sm_mhz", 0) >= 1500, fail_allowed=True),
+         "status": status_for(burn.get("max_sm_mhz", 0) >= boost_sm_min, fail_allowed=True),
          "detail": "held boost under load"},
         {"name": "burn_max_power_w", "value": burn.get("max_power_w"),
-         "status": status_for(burn.get("max_power_w", 0) >= 100, fail_allowed=True),
+         "status": status_for(burn.get("max_power_w", 0) >= power_min, fail_allowed=True),
          "detail": "memory-bound kernel; compute-dense would draw more"},
         {"name": "burn_pcie_under_load", "value": f"Gen{burn.get('pcie_max_gen_seen')}",
          "status": status_for(ramped, fail_allowed=False),

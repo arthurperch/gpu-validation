@@ -18,6 +18,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import socket
 import struct
@@ -30,18 +31,15 @@ def is_link_local_v4(ip: str) -> bool:
     return ip.startswith("169.254.")
 
 
-def is_link_local_v6(ip: str) -> bool:
-    return ip.lower().startswith("fe80:")
-
-
 def get_interface_addresses():
     """Return (ipv4_list, ipv6_list) for the primary interface.
 
     We discover the outbound interface by connecting a UDP socket (no packets
     are actually sent), the standard trick to find the address that owns the
-    default route.
+    default route. IPv6 addresses are parsed with the ipaddress module so
+    scope (link-local, loopback, global) is classified correctly.
     """
-    ipv4, ipv6 = [], []
+    ipv4 = []
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
@@ -51,50 +49,62 @@ def get_interface_addresses():
             ipv4.append(local_ip)
     except OSError:
         pass
+    return ipv4, _ipv6_addresses()
 
-    # IPv6: enumerate via /proc/net/if_inet6 (no root needed)
+
+def _ipv6_addresses():
+    """All IPv6 addresses on the host, parsed from /proc/net/if_inet6.
+
+    /proc gives each address as 32 hex chars (16 bytes) with no colons. We
+    convert that to an ipaddress.IPv6Address, which handles scope correctly,
+    and drop loopback (::1) and the unspecified address (::).
+    """
+    addrs = []
     try:
         for line in Path("/proc/net/if_inet6").read_text().splitlines():
             parts = line.split()
             if len(parts) < 6:
                 continue
-            addr = parts[0]
-            # /proc gives 32 hex chars (16 bytes), no colons, insert them
-            groups = [addr[i:i + 4] for i in range(0, 32, 4)]
-            ip6 = ":".join(groups)
-            if ip6 == "::1":  # skip loopback
+            # first token is the raw 32-hex-char address; build "::"-less form
+            raw = parts[0]
+            groups = [raw[i:i + 4] for i in range(0, 32, 4)]
+            text = ":".join(groups)
+            a = ipaddress.IPv6Address(text)
+            if a.is_loopback or a.is_unspecified:
                 continue
-            ipv6.append(ip6)
+            addrs.append(a)
     except OSError:
         pass
-    return ipv4, ipv6
+    return addrs
 
 
 def dhcp_check():
-    """DHCP: is there a valid (non-link-local) IPv4 lease?
+    """IPv4 addressing: is there a valid (non-link-local) address?
 
-    A 169.254.x.x address means DHCP failed and the host fell back to
-    link-local, a red flag for a node meant to join the fleet.
+    A 169.254.x.x address is what a host falls back to when DHCP fails, so
+    detecting link-local is the observable signal of a missing lease. This
+    does not read the lease itself (a static address would also pass here);
+    it checks the symptom a failed DHCP leaves behind.
     """
     ipv4, _ = get_interface_addresses()
     if not ipv4:
-        return ("FAIL", "no IPv4 address", "no lease at all")
+        return ("FAIL", "no IPv4 address", "no address at all")
     ip = ipv4[0]
     if is_link_local_v4(ip):
-        return ("FAIL", ip, "link-local only - DHCP lease missing")
-    return ("PASS", ip, "valid lease")
+        return ("FAIL", ip, "link-local only, the classic DHCP-failure fallback")
+    return ("PASS", ip, "valid non-link-local address")
 
 
 def ipv6_check():
     """IPv6: link-local must be present; a global (SLAAC) address is ideal."""
     _, ipv6 = get_interface_addresses()
-    link_local = [a for a in ipv6 if is_link_local_v6(a)]
-    global_addrs = [a for a in ipv6 if not is_link_local_v6(a)]
+    link_local = [a for a in ipv6 if a.is_link_local]
+    global_addrs = [a for a in ipv6 if a.is_global]
     if not link_local:
         return ("FAIL", "none", "no IPv6 link-local")
     if global_addrs:
-        return ("PASS", global_addrs[0], "global + link-local present")
-    return ("WARN", link_local[0], "link-local only, no global/SLAAC address")
+        return ("PASS", str(global_addrs[0]), "global + link-local present")
+    return ("WARN", str(link_local[0]), "link-local only, no global/SLAAC address")
 
 
 def icmp_check(target: str = "8.8.8.8"):

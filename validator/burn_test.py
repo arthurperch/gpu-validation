@@ -56,7 +56,14 @@ def main() -> int:
     pynvml.nvmlInit()
     handle = pynvml.nvmlDeviceGetHandleByIndex(0)
     max_gen = pynvml.nvmlDeviceGetMaxPcieLinkGeneration(handle)
-    temp_limit = 85.0
+
+    # Pass/fail baselines. These are tuned for the RTX 3070 used to develop
+    # this, and would be per-SKU in a real fleet (an A100 or H100 has a
+    # different clock/power/thermal envelope). They live here so they're
+    # obvious to change, not buried in the analysis below.
+    temp_limit = 85.0      # deg C
+    boost_sm_min = 1500    # MHz, rough "did it leave idle clocks" threshold
+    power_min = 100.0      # W, rough "did it actually draw power" threshold
 
     print(f"\n=== GPU Burn Test - {args.seconds}s @ {args.buffer_gib} GiB ===\n")
     print(f"launching {args.binary}...\n")
@@ -87,15 +94,15 @@ def main() -> int:
     max_gen_seen = max(int(s["pcie"][3]) for s in timeline)
 
     link_ramped = max_gen_seen >= max_gen
-    held_boost = max_sm >= 1500
-    drew_power = max_power >= 100.0
+    held_boost = max_sm >= boost_sm_min
+    drew_power = max_power >= power_min
     thermal_ok = t <= temp_limit
 
     print("=== Burn results ===")
     rows = [
         ("peak temp", f"{t}C", "PASS" if thermal_ok else "FAIL", f"limit {temp_limit}C"),
-        ("max SM clock", f"{max_sm} MHz", "PASS" if held_boost else "WARN", "boost ~1500+"),
-        ("max power", f"{max_power} W", "PASS" if drew_power else "WARN", "expect 100W+"),
+        ("max SM clock", f"{max_sm} MHz", "PASS" if held_boost else "WARN", f"boost ~{boost_sm_min}+"),
+        ("max power", f"{max_power} W", "PASS" if drew_power else "WARN", f"expect {power_min:.0f}W+"),
         ("max util", f"{max_util}%", "PASS", ""),
         ("PCIe link", f"Gen{max_gen_seen} (max Gen{max_gen})",
          "PASS" if link_ramped else "FAIL", "ramped to max gen under load"),
