@@ -3,7 +3,7 @@
 <table>
   <tr>
     <td valign="top">
-      <img src="assets/node-demo.gif" alt="gpu_validate.py running against a real RTX 3070" style="width: 480px; max-width: 100%;" />
+      <img src="https://github.com/user-attachments/assets/26104483-d07c-4425-855c-ddf1e9f6f13f" alt="ascii-art" style="width: 512px; height: 410px;" />
     </td>
     <td valign="top" style="padding-left: 20px; line-height: 1.6;">
       <h3><b>The node side of GPU onboarding</b></h3>
