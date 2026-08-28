@@ -1,5 +1,5 @@
 # GPU Validation Fleet
-
+https://media.discordapp.net/attachments/1507463032828199127/1542990747345756200/content.png?ex=6a933d9d&is=6a91ec1d&hm=d0d7f6cadb15f356ae16cf320eb01df0a95100abf5f4d23ae93dce6e84ac8276&=&format=webp&quality=lossless&width=768&height=577
 Tools for checking whether a GPU node is healthy enough to put into production.
 A node runs a health check, a burn in test, and a network check, then posts the
 results to a serverless gate that decides whether to onboard it, hold it, or
