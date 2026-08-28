@@ -1,5 +1,20 @@
 # GPU Validation Fleet
-<img width="2115" height="1021" alt="image" src="https://github.com/user-attachments/assets/e1415942-6c67-4504-9a6b-6a7f96829eef" />
+
+<table>
+  <tr>
+    <td valign="top">
+      <img src="assets/node-demo.gif" alt="gpu_validate.py running against a real RTX 3070" style="width: 480px; max-width: 100%;" />
+    </td>
+    <td valign="top" style="padding-left: 20px; line-height: 1.6;">
+      <h3><b>The node side of GPU onboarding</b></h3>
+      <p><b>NVML telemetry</b> — temp, ECC, PCIe, clocks, power</p>
+      <p><b>CUDA burn test</b> — stresses the card so a weak GPU can't hide</p>
+      <p><b>Network validation</b> — DHCP, IPv6, ICMP</p>
+      <p><b>Ansible orchestration</b> — the whole pipeline as one command</p>
+      <p><b>Reports to the gate</b> — never declares itself healthy</p>
+    </td>
+  </tr>
+</table>
 
 Tools for checking whether a GPU node is healthy enough to put into production.
 A node runs a health check, a burn in test, and a network check, then posts the
