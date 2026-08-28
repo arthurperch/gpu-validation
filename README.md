@@ -8,6 +8,10 @@ send it back (RMA).
 
 The node reports. The gate decides. A node never gates itself.
 
+> This is the **node side** of the pipeline. The **control plane** — the
+> serverless gate that receives reports and decides PROVISION / HOLD / RMA —
+> lives in a separate repo: **[gpu-onboarding-gate](https://github.com/arthurperch/gpu-onboarding-gate)**.
+
 ## What's in here
 
 The repo has two halves.
