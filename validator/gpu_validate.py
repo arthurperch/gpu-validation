@@ -110,6 +110,16 @@ def collect(handle) -> list[Check]:
     checks.append(Check("vram_total_gib", round(total_bytes / (1024 ** 3), 1),
                         "PASS", name))
 
+    # --- cooling ----------------------------------------------------------
+    # Fans read 0% when the card is cool enough to stop them ("fan stop").
+    # That's expected, not a failure, so we report it as informational PASS.
+    try:
+        fan = pynvml.nvmlDeviceGetFanSpeed(handle)
+        note = "fans idle, card is cool" if fan == 0 else f"cooler at {fan}%"
+        checks.append(Check("fan_speed_pct", fan, "PASS", note))
+    except pynvml.NVMLError:
+        checks.append(Check("fan_speed_pct", "N/A", "N/A", "no fan sensor"))
+
     # --- PCIe link integrity ----------------------------------------------
     gen = pynvml.nvmlDeviceGetCurrPcieLinkGeneration(handle)
     width = pynvml.nvmlDeviceGetCurrPcieLinkWidth(handle)
