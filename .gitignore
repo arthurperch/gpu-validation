@@ -14,3 +14,8 @@ artifacts/
 .idea/
 .vscode/
 PROGRESS.md
+
+# video demo symlinks
+health
+verify
+audit
